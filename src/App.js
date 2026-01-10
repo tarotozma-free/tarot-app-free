@@ -11,7 +11,6 @@ const SUPABASE_URL = 'https://tvhrlongbpykqksegkbm.supabase.co';
 
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aHJsb25nYnB5a3Frc2Vna2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4NjcyNzIsImV4cCI6MjA4MzQ0MzI3Mn0.qK3BpUpskuS4PB8lzxV-06n3P203RCLgOF91i9BU0Bc';
 
-
 const GEMINI_API_KEY = 'AIzaSyAQVqfq6oAdWCC_qvUJNGkm4HDZgJ4-DZ4';
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -46,6 +45,7 @@ function App() {
   const [currentSessionId, setCurrentSessionId] = useState(null);
   const [pastSessions, setPastSessions] = useState([]);
   const [visitCount, setVisitCount] = useState(0);
+  const [currentCardIndex, setCurrentCardIndex] = useState(0); // 현재 뽑고 있는 카드 인덱스
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -80,20 +80,22 @@ function App() {
       }
 
       console.log('카드 로딩 시작...');
+      // 만신카드만 필터링
       const { data: cards, error } = await supabase
         .from('tarot_cards')
         .select('*')
-        .order('id');
+        .eq('card_type', '만신카드')
+        .order('card_num');
       
       if (error) {
-        console.error('카드 로드 오류:', error);
-        alert('카드 데이터를 불러오는데 실패했습니다: ' + error.message);
+        console.error('카드 로드 오류 상세:', error);
+        alert('카드 데이터를 불러오는데 실패했습니다.\n\n에러: ' + error.message);
       } else if (cards && cards.length > 0) {
-        console.log('카드 로드 성공:', cards.length + '장');
+        console.log('만신카드 로드 성공:', cards.length + '장');
         setAllCards(cards);
       } else {
-        console.error('카드 데이터가 비어있습니다');
-        alert('카드 데이터가 없습니다. DB를 확인해주세요.');
+        console.error('만신카드 데이터가 비어있습니다');
+        alert('만신카드 데이터가 없습니다. DB를 확인해주세요.');
       }
     } catch (err) {
       console.error('초기화 오류:', err);
@@ -212,6 +214,7 @@ function App() {
     }
 
     setStep('consultation');
+    setCurrentCardIndex(0);
     
     try {
       const displayPrompt = `다음 질문을 100자 이내로 자연스럽게 요약:
@@ -235,68 +238,76 @@ function App() {
     }, 1000);
 
     setTimeout(() => {
-      drawThreeCards();
+      drawFirstCard();
     }, 2000);
   };
 
-  const drawThreeCards = async () => {
-    console.log('카드 뽑기 시작... 전체 카드:', allCards.length);
-    
+  // 첫 번째 카드 뽑기
+  const drawFirstCard = async () => {
     addMessage('assistant', '카드를 섞고 있습니다...');
-
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
     const shuffled = [...allCards].sort(() => Math.random() - 0.5);
-    const selectedCards = shuffled.slice(0, 3);
-
-    console.log('선택된 카드:', selectedCards);
-
-    for (let i = 0; i < selectedCards.length; i++) {
-      await new Promise(resolve => setTimeout(resolve, 2000));
-      
-      const card = selectedCards[i];
-      const isReversed = Math.random() < 0.5;
-      const cardWithOrientation = { ...card, isReversed };
-      
-      console.log(`${i+1}번째 카드:`, cardWithOrientation.name_korean, isReversed ? '(역)' : '');
-      
-      setDrawnCards(prev => {
-        const newCards = [...prev, cardWithOrientation];
-        console.log('현재 뽑힌 카드들:', newCards);
-        return newCards;
-      });
-
-      const cardLabel = i === 0 ? '첫 번째 카드.' : i === 1 ? '두 번째 카드.' : '세 번째 카드.';
-      addMessage('assistant', `${cardLabel} ${card.name_korean}${isReversed ? ' (역방향)' : ''}`);
-    }
-
+    const card = shuffled[0];
+    
+    setDrawnCards([card]);
+    addMessage('assistant', `첫 번째 카드: ${card.name}`);
+    
     setTimeout(() => {
-      interpretThreeCards(selectedCards);
+      interpretSingleCard(card, 0);
     }, 1000);
   };
 
-  const interpretThreeCards = async (cards) => {
+  // 개별 카드 해석 (누적)
+  const interpretSingleCard = async (card, cardIndex) => {
     setIsTyping(true);
     setIsStreaming(true);
 
-    const cardDescriptions = cards.map((card, idx) => {
-      const isReversed = drawnCards[idx]?.isReversed;
-      return `${idx + 1}번째 카드: ${card.name_korean} (${card.name_english})${isReversed ? ' - 역방향' : ' - 정방향'}
-키워드: ${card.keywords_korean}
-의미: ${card.meaning_korean}`;
-    }).join('\n\n');
-
-    const prompt = `당신은 타로 마스터입니다.
+    let prompt;
+    
+    if (cardIndex === 0) {
+      // 첫 번째 카드
+      prompt = `당신은 타로 마스터입니다.
 
 내담자의 고민: "${concern}"
 
-뽑힌 카드:
-${cardDescriptions}
+첫 번째 카드: ${card.name}
+키워드: ${card.keyword}
+의미: ${card.meaning}
 
-각 카드를 해석하고, 세 카드가 어떻게 연결되는지 설명해주세요.
-- 1번 카드: 과거/현재 상황
-- 2번 카드: 내면의 감정
-- 3번 카드: 미래/결과
-
+이 카드가 현재 상황과 과거를 어떻게 나타내는지 해석해주세요.
 따뜻하고 공감하는 톤으로 작성해주세요.`;
+    } else if (cardIndex === 1) {
+      // 두 번째 카드 (첫 번째 해석 이어서)
+      const firstCard = drawnCards[0];
+      prompt = `당신은 타로 마스터입니다.
+
+내담자의 고민: "${concern}"
+
+첫 번째 카드: ${firstCard.name}
+두 번째 카드: ${card.name} (새로 나온 카드)
+키워드: ${card.keyword}
+의미: ${card.meaning}
+
+첫 번째 카드의 해석을 바탕으로, 두 번째 카드가 내담자의 내면 감정과 잠재의식을 어떻게 드러내는지 해석해주세요.
+두 카드가 어떻게 연결되는지도 설명해주세요.`;
+    } else {
+      // 세 번째 카드 (전체 누적)
+      const firstCard = drawnCards[0];
+      const secondCard = drawnCards[1];
+      prompt = `당신은 타로 마스터입니다.
+
+내담자의 고민: "${concern}"
+
+첫 번째 카드: ${firstCard.name}
+두 번째 카드: ${secondCard.name}
+세 번째 카드: ${card.name} (새로 나온 카드)
+키워드: ${card.keyword}
+의미: ${card.meaning}
+
+앞의 두 카드 해석을 종합하고, 세 번째 카드가 미래와 결과를 어떻게 보여주는지 해석해주세요.
+세 카드의 전체적인 흐름과 메시지를 전달해주세요.`;
+    }
 
     try {
       const response = await fetch(
@@ -318,6 +329,7 @@ ${cardDescriptions}
       const data = await response.json();
       const fullText = data.candidates[0].content.parts[0].text;
 
+      // 스트리밍 효과
       let currentText = '';
       for (let i = 0; i < fullText.length; i++) {
         currentText += fullText[i];
@@ -327,19 +339,78 @@ ${cardDescriptions}
 
       addMessage('assistant', fullText);
       setStreamingMessage('');
+      
+      setIsStreaming(false);
+      setIsTyping(false);
+
+      // 다음 카드 뽑기 또는 총평
+      if (cardIndex < 2) {
+        setTimeout(() => {
+          drawNextCard(cardIndex + 1);
+        }, 2000);
+      } else {
+        // 3장 다 뽑았으면 총평
+        setTimeout(() => {
+          giveFinalReading();
+        }, 2000);
+      }
     } catch (error) {
       console.error('해석 오류:', error);
       addMessage('assistant', '해석 중 오류가 발생했습니다.');
+      setIsStreaming(false);
+      setIsTyping(false);
     }
+  };
 
-    setIsStreaming(false);
+  // 다음 카드 뽑기
+  const drawNextCard = async (cardIndex) => {
+    addMessage('assistant', `${cardIndex === 1 ? '두' : '세'} 번째 카드를 뽑습니다...`);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    
+    const shuffled = [...allCards].sort(() => Math.random() - 0.5);
+    const usedCardIds = drawnCards.map(c => c.card_id);
+    const availableCards = shuffled.filter(c => !usedCardIds.includes(c.card_id));
+    const card = availableCards[0];
+    
+    setDrawnCards(prev => [...prev, card]);
+    addMessage('assistant', `${cardIndex === 1 ? '두' : '세'} 번째 카드: ${card.name}`);
+    
+    setTimeout(() => {
+      interpretSingleCard(card, cardIndex);
+    }, 1000);
+  };
+
+  // 총평
+  const giveFinalReading = async () => {
+    setIsTyping(true);
+    
+    const cardDescriptions = drawnCards.map((card, idx) => {
+      return `${idx + 1}번째 카드: ${card.name}`;
+    }).join('\n');
+
+    const prompt = `당신은 타로 마스터입니다.
+
+내담자의 고민: "${concern}"
+
+뽑힌 카드:
+${cardDescriptions}
+
+지금까지의 해석을 종합하여 최종 총평을 해주세요.
+- 세 카드가 전체적으로 전하는 메시지
+- 내담자가 나아가야 할 방향
+- 희망적이고 따뜻한 마무리
+
+총평:`;
+
+    const response = await callGeminiAPI(prompt);
+    addMessage('assistant', '=== 총평 ===\n\n' + response);
     setIsTyping(false);
   };
 
   const handleSubdeck = async () => {
     const shuffled = [...allCards].sort(() => Math.random() - 0.5);
-    const usedCardIds = drawnCards.map(c => c.id);
-    const availableCards = shuffled.filter(c => !usedCardIds.includes(c.id));
+    const usedCardIds = drawnCards.map(c => c.card_id);
+    const availableCards = shuffled.filter(c => !usedCardIds.includes(c.card_id));
     const newCard = availableCards[0];
 
     if (!newCard) {
@@ -347,20 +418,18 @@ ${cardDescriptions}
       return;
     }
 
-    const isReversed = Math.random() < 0.5;
-    const cardWithOrientation = { ...newCard, isReversed };
-    setDrawnCards(prev => [...prev, cardWithOrientation]);
+    setDrawnCards(prev => [...prev, newCard]);
 
     const cardNum = drawnCards.length + 1;
-    addMessage('assistant', `추가 카드 ${cardNum - 3}번. ${newCard.name_korean}${isReversed ? ' (역방향)' : ''}`);
+    addMessage('assistant', `추가 카드 ${cardNum - 3}번: ${newCard.name}`);
 
     setIsTyping(true);
     const prompt = `내담자의 고민: "${concern}"
 
 기존에 뽑은 카드들이 있고, 추가로 이 카드가 나왔습니다:
-${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : ' - 정방향'}
-키워드: ${newCard.keywords_korean}
-의미: ${newCard.meaning_korean}
+${newCard.name}
+키워드: ${newCard.keyword}
+의미: ${newCard.meaning}
 
 이 카드가 추가로 전하는 메시지를 간결하게 설명해주세요.`;
 
@@ -372,7 +441,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
   const handleAdvice = async () => {
     setIsTyping(true);
     const cardDescriptions = drawnCards.map((card) => {
-      return `${card.name_korean}${card.isReversed ? ' (역방향)' : ' (정방향)'}`;
+      return card.name;
     }).join(', ');
 
     const prompt = `내담자의 고민: "${concern}"
@@ -389,7 +458,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
   const handleFortune = async () => {
     setIsTyping(true);
     const cardDescriptions = drawnCards.map((card) => {
-      return `${card.name_korean}${card.isReversed ? ' (역방향)' : ' (정방향)'}`;
+      return card.name;
     }).join(', ');
 
     const prompt = `뽑힌 카드: ${cardDescriptions}
@@ -411,9 +480,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
     addMessage('assistant', '상담을 종료합니다.');
 
     try {
-      const cardsList = drawnCards.map(c => 
-        `${c.name_korean}${c.isReversed ? '(R)' : ''}`
-      ).join(', ');
+      const cardsList = drawnCards.map(c => c.name).join(', ');
 
       const { data, error } = await supabase
         .from('consultations')
@@ -445,9 +512,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
   };
 
   const handleShare = async () => {
-    const cardsList = drawnCards.map(c => 
-      `${c.name_korean}${c.isReversed ? '(역)' : ''}`
-    ).join(', ');
+    const cardsList = drawnCards.map(c => c.name).join(', ');
 
     const shareText = `🔮 타로 상담 결과
 
@@ -480,6 +545,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
     setDrawnCards([]);
     setStreamingMessage('');
     setCurrentSessionId(null);
+    setCurrentCardIndex(0);
   };
 
   const addMessage = (role, content) => {
@@ -500,7 +566,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
           <div style={{ fontSize: '60px', marginBottom: '20px' }}>🔮</div>
           <div style={{ fontSize: '18px' }}>로딩중...</div>
           <div style={{ fontSize: '14px', marginTop: '10px', color: '#00838F' }}>
-            카드 데이터 불러오는 중...
+            만신카드 불러오는 중...
           </div>
         </div>
       </div>
@@ -665,7 +731,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
             </p>
             {allCards.length > 0 && (
               <div style={{ fontSize: '12px', color: '#00ACC1', marginTop: '5px' }}>
-                카드 {allCards.length}장 준비 완료
+                만신카드 {allCards.length}장 준비 완료
               </div>
             )}
           </div>
@@ -714,7 +780,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
                 boxShadow: (concern.trim() && allCards.length > 0) ? '0 4px 15px rgba(0, 172, 193, 0.3)' : 'none'
               }}
             >
-              {allCards.length === 0 ? '카드 로딩 중...' : '상담 시작하기'}
+              {allCards.length === 0 ? '만신카드 로딩 중...' : '상담 시작하기'}
             </button>
           </div>
 
@@ -797,7 +863,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
             boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)'
           }}>
             <div style={{ fontSize: '11px', color: '#00838F', marginBottom: '8px' }}>
-              뽑힌 카드 ({drawnCards.length}장)
+              뽑힌 만신카드 ({drawnCards.length}장)
             </div>
             {drawnCards.map((card, idx) => (
               <span
@@ -814,7 +880,7 @@ ${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : 
                   fontWeight: 'bold'
                 }}
               >
-                {card.name_korean} {card.isReversed ? '(역)' : ''}
+                {card.name}
               </span>
             ))}
           </div>
