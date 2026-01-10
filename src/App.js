@@ -1,25 +1,1038 @@
-import logo from './logo.svg';
+import React, { useState, useEffect, useRef } from 'react';
+import { createClient } from '@supabase/supabase-js';
+import { ArrowLeft } from 'lucide-react';
 import './App.css';
 
+// ========== 버전 설정 ==========
+const APP_VERSION = 'FREE';
+
+// Supabase 설정
+const SUPABASE_URL = 'https://tvhrlongbpykqksegkbm.supabase.co';
+
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aHJsb25nYnB5a3Frc2Vna2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4NjcyNzIsImV4cCI6MjA4MzQ0MzI3Mn0.qK3BpUpskuS4PB8lzxV-06n3P203RCLgOF91i9BU0Bc';
+
+
+const GEMINI_API_KEY = 'AIzaSyAQVqfq6oAdWCC_qvUJNGkm4HDZgJ4-DZ4';
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ========== 사용자 ID 관리 ==========
+const getUserId = () => {
+  let userId = localStorage.getItem('tarot_user_id');
+  
+  if (!userId) {
+    userId = 'free_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+    localStorage.setItem('tarot_user_id', userId);
+    console.log('새로운 사용자 ID 생성:', userId);
+  }
+  
+  return userId;
+};
+
 function App() {
-  return (
-    <div className="App">
-      <header className="App-header">
-        <img src={logo} className="App-logo" alt="logo" />
-        <p>
-          Edit <code>src/App.js</code> and save to reload.
+  const [step, setStep] = useState('loading');
+  const [userId, setUserId] = useState('');
+  const [userName, setUserName] = useState('');
+  const [tempName, setTempName] = useState('');
+  const [concern, setConcern] = useState('');
+  const [sessionTitle, setSessionTitle] = useState('');
+  const [displayTitle, setDisplayTitle] = useState('');
+  const [messages, setMessages] = useState([]);
+  const [isTyping, setIsTyping] = useState(false);
+  const [drawnCards, setDrawnCards] = useState([]);
+  const [streamingMessage, setStreamingMessage] = useState('');
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [allCards, setAllCards] = useState([]);
+  const [currentSessionId, setCurrentSessionId] = useState(null);
+  const [pastSessions, setPastSessions] = useState([]);
+  const [visitCount, setVisitCount] = useState(0);
+  const messagesEndRef = useRef(null);
+
+  useEffect(() => {
+    initializeUser();
+  }, []);
+
+  useEffect(() => {
+    scrollToBottom();
+  }, [messages, streamingMessage]);
+
+  const scrollToBottom = () => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const initializeUser = async () => {
+    try {
+      const id = getUserId();
+      setUserId(id);
+
+      const count = parseInt(localStorage.getItem('tarot_visit_count') || '0') + 1;
+      localStorage.setItem('tarot_visit_count', count.toString());
+      setVisitCount(count);
+
+      const savedName = localStorage.getItem('tarot_user_name');
+      
+      if (savedName) {
+        setUserName(savedName);
+        await loadUserData(id);
+        setStep('input');
+      } else {
+        setStep('name_input');
+      }
+
+      console.log('카드 로딩 시작...');
+      const { data: cards, error } = await supabase
+        .from('tarot_cards')
+        .select('*')
+        .order('id');
+      
+      if (error) {
+        console.error('카드 로드 오류:', error);
+        alert('카드 데이터를 불러오는데 실패했습니다: ' + error.message);
+      } else if (cards && cards.length > 0) {
+        console.log('카드 로드 성공:', cards.length + '장');
+        setAllCards(cards);
+      } else {
+        console.error('카드 데이터가 비어있습니다');
+        alert('카드 데이터가 없습니다. DB를 확인해주세요.');
+      }
+    } catch (err) {
+      console.error('초기화 오류:', err);
+      alert('초기화 중 오류가 발생했습니다: ' + err.message);
+      setStep('name_input');
+    }
+  };
+
+  const loadUserData = async (userId) => {
+    try {
+      const { data: sessions, error } = await supabase
+        .from('consultations')
+        .select('*')
+        .eq('free_user_id', userId)
+        .eq('version_type', 'free')
+        .order('created_at', { ascending: false })
+        .limit(10);
+      
+      if (error) {
+        console.error('과거 상담 로드 오류:', error);
+      } else if (sessions) {
+        setPastSessions(sessions);
+        console.log('과거 상담 로드:', sessions.length + '개');
+      }
+    } catch (err) {
+      console.error('데이터 로드 오류:', err);
+    }
+  };
+
+  const handleNameSubmit = async () => {
+    if (!tempName.trim()) {
+      alert('이름을 입력해주세요!');
+      return;
+    }
+
+    localStorage.setItem('tarot_user_name', tempName);
+    setUserName(tempName);
+
+    try {
+      const { error } = await supabase
+        .from('free_users')
+        .insert([{
+          free_user_id: userId,
+          name: tempName,
+          visit_count: 1
+        }]);
+      
+      if (error) {
+        console.error('사용자 저장 오류:', error);
+      } else {
+        console.log('사용자 정보 저장 완료');
+      }
+    } catch (err) {
+      console.error('사용자 저장 오류:', err);
+    }
+
+    setStep('input');
+  };
+
+  const callGeminiAPI = async (prompt) => {
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }]
+          })
+        }
+      );
+      
+      const data = await response.json();
+      
+      if (data.candidates && data.candidates[0]) {
+        return data.candidates[0].content.parts[0].text;
+      }
+      
+      return '응답을 받지 못했습니다.';
+    } catch (error) {
+      console.error('Gemini 오류:', error);
+      return '연결 오류가 발생했습니다.';
+    }
+  };
+
+  const getOpeningMessage = async (question) => {
+    const prompt = `다음 타로 질문을 읽고, 타로 마스터가 카드 섞기 전에 할 자연스러운 멘트를 만드세요.
+
+질문: "${question}"
+
+요구사항:
+- 질문의 핵심 주제 파악
+- "~에 대한 고민이시군요. 카드를 섞어보겠습니다" 형식
+- 30자 이내
+- 따뜻하고 공감하는 톤
+
+멘트:`;
+    
+    try {
+      const response = await callGeminiAPI(prompt);
+      return response.trim().replace(/["']/g, '');
+    } catch (err) {
+      return "고민이 느껴지네요. 카드를 섞어보겠습니다.";
+    }
+  };
+
+  const handleStartConsultation = async () => {
+    if (!concern.trim()) {
+      alert('고민을 입력해주세요!');
+      return;
+    }
+
+    if (allCards.length === 0) {
+      alert('카드 데이터를 불러오는 중입니다. 잠시 후 다시 시도해주세요.');
+      return;
+    }
+
+    setStep('consultation');
+    
+    try {
+      const displayPrompt = `다음 질문을 100자 이내로 자연스럽게 요약:
+"${concern}"
+핵심만 간결하게:`;
+      const displaySummary = await callGeminiAPI(displayPrompt);
+      setDisplayTitle(displaySummary.trim().replace(/["']/g, '').substring(0, 100));
+    } catch (err) {
+      setDisplayTitle(concern.substring(0, 100));
+    }
+
+    const openingMsg = await getOpeningMessage(concern);
+    setMessages([
+      { role: 'assistant', content: openingMsg }
+    ]);
+
+    setSessionTitle(concern.substring(0, 30) + (concern.length > 30 ? '...' : ''));
+
+    setTimeout(() => {
+      addMessage('assistant', `${userName}님의 타로 상담을 시작합니다.`);
+    }, 1000);
+
+    setTimeout(() => {
+      drawThreeCards();
+    }, 2000);
+  };
+
+  const drawThreeCards = async () => {
+    console.log('카드 뽑기 시작... 전체 카드:', allCards.length);
+    
+    addMessage('assistant', '카드를 섞고 있습니다...');
+
+    const shuffled = [...allCards].sort(() => Math.random() - 0.5);
+    const selectedCards = shuffled.slice(0, 3);
+
+    console.log('선택된 카드:', selectedCards);
+
+    for (let i = 0; i < selectedCards.length; i++) {
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      
+      const card = selectedCards[i];
+      const isReversed = Math.random() < 0.5;
+      const cardWithOrientation = { ...card, isReversed };
+      
+      console.log(`${i+1}번째 카드:`, cardWithOrientation.name_korean, isReversed ? '(역)' : '');
+      
+      setDrawnCards(prev => {
+        const newCards = [...prev, cardWithOrientation];
+        console.log('현재 뽑힌 카드들:', newCards);
+        return newCards;
+      });
+
+      const cardLabel = i === 0 ? '첫 번째 카드.' : i === 1 ? '두 번째 카드.' : '세 번째 카드.';
+      addMessage('assistant', `${cardLabel} ${card.name_korean}${isReversed ? ' (역방향)' : ''}`);
+    }
+
+    setTimeout(() => {
+      interpretThreeCards(selectedCards);
+    }, 1000);
+  };
+
+  const interpretThreeCards = async (cards) => {
+    setIsTyping(true);
+    setIsStreaming(true);
+
+    const cardDescriptions = cards.map((card, idx) => {
+      const isReversed = drawnCards[idx]?.isReversed;
+      return `${idx + 1}번째 카드: ${card.name_korean} (${card.name_english})${isReversed ? ' - 역방향' : ' - 정방향'}
+키워드: ${card.keywords_korean}
+의미: ${card.meaning_korean}`;
+    }).join('\n\n');
+
+    const prompt = `당신은 타로 마스터입니다.
+
+내담자의 고민: "${concern}"
+
+뽑힌 카드:
+${cardDescriptions}
+
+각 카드를 해석하고, 세 카드가 어떻게 연결되는지 설명해주세요.
+- 1번 카드: 과거/현재 상황
+- 2번 카드: 내면의 감정
+- 3번 카드: 미래/결과
+
+따뜻하고 공감하는 톤으로 작성해주세요.`;
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.9,
+              topP: 0.95,
+              topK: 40
+            }
+          })
+        }
+      );
+
+      const data = await response.json();
+      const fullText = data.candidates[0].content.parts[0].text;
+
+      let currentText = '';
+      for (let i = 0; i < fullText.length; i++) {
+        currentText += fullText[i];
+        setStreamingMessage(currentText);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      addMessage('assistant', fullText);
+      setStreamingMessage('');
+    } catch (error) {
+      console.error('해석 오류:', error);
+      addMessage('assistant', '해석 중 오류가 발생했습니다.');
+    }
+
+    setIsStreaming(false);
+    setIsTyping(false);
+  };
+
+  const handleSubdeck = async () => {
+    const shuffled = [...allCards].sort(() => Math.random() - 0.5);
+    const usedCardIds = drawnCards.map(c => c.id);
+    const availableCards = shuffled.filter(c => !usedCardIds.includes(c.id));
+    const newCard = availableCards[0];
+
+    if (!newCard) {
+      alert('더 이상 뽑을 카드가 없습니다!');
+      return;
+    }
+
+    const isReversed = Math.random() < 0.5;
+    const cardWithOrientation = { ...newCard, isReversed };
+    setDrawnCards(prev => [...prev, cardWithOrientation]);
+
+    const cardNum = drawnCards.length + 1;
+    addMessage('assistant', `추가 카드 ${cardNum - 3}번. ${newCard.name_korean}${isReversed ? ' (역방향)' : ''}`);
+
+    setIsTyping(true);
+    const prompt = `내담자의 고민: "${concern}"
+
+기존에 뽑은 카드들이 있고, 추가로 이 카드가 나왔습니다:
+${newCard.name_korean} (${newCard.name_english})${isReversed ? ' - 역방향' : ' - 정방향'}
+키워드: ${newCard.keywords_korean}
+의미: ${newCard.meaning_korean}
+
+이 카드가 추가로 전하는 메시지를 간결하게 설명해주세요.`;
+
+    const response = await callGeminiAPI(prompt);
+    addMessage('assistant', response);
+    setIsTyping(false);
+  };
+
+  const handleAdvice = async () => {
+    setIsTyping(true);
+    const cardDescriptions = drawnCards.map((card) => {
+      return `${card.name_korean}${card.isReversed ? ' (역방향)' : ' (정방향)'}`;
+    }).join(', ');
+
+    const prompt = `내담자의 고민: "${concern}"
+뽑힌 카드: ${cardDescriptions}
+
+카드를 바탕으로 내담자에게 따뜻하고 실질적인 조언을 해주세요.
+구체적인 행동 방안을 포함해주세요.`;
+
+    const response = await callGeminiAPI(prompt);
+    addMessage('assistant', response);
+    setIsTyping(false);
+  };
+
+  const handleFortune = async () => {
+    setIsTyping(true);
+    const cardDescriptions = drawnCards.map((card) => {
+      return `${card.name_korean}${card.isReversed ? ' (역방향)' : ' (정방향)'}`;
+    }).join(', ');
+
+    const prompt = `뽑힌 카드: ${cardDescriptions}
+
+이 카드들을 바탕으로 운을 개선할 수 있는 개운법을 알려주세요.
+- 추천 색상
+- 행운의 숫자
+- 도움되는 행동
+- 피해야 할 것
+
+간결하고 실천 가능하게 작성해주세요.`;
+
+    const response = await callGeminiAPI(prompt);
+    addMessage('assistant', response);
+    setIsTyping(false);
+  };
+
+  const handleEndConsultation = async () => {
+    addMessage('assistant', '상담을 종료합니다.');
+
+    try {
+      const cardsList = drawnCards.map(c => 
+        `${c.name_korean}${c.isReversed ? '(R)' : ''}`
+      ).join(', ');
+
+      const { data, error } = await supabase
+        .from('consultations')
+        .insert([{
+          free_user_id: userId,
+          free_user_name: userName,
+          version_type: 'free',
+          title: sessionTitle,
+          concern: concern,
+          cards_drawn: cardsList,
+          created_at: new Date().toISOString()
+        }])
+        .select()
+        .single();
+
+      if (error) {
+        console.error('저장 오류:', error);
+      } else if (data) {
+        setCurrentSessionId(data.id);
+        console.log('상담 저장 완료:', data.id);
+      }
+    } catch (err) {
+      console.error('저장 오류:', err);
+    }
+
+    setTimeout(() => {
+      setStep('finished');
+    }, 1500);
+  };
+
+  const handleShare = async () => {
+    const cardsList = drawnCards.map(c => 
+      `${c.name_korean}${c.isReversed ? '(역)' : ''}`
+    ).join(', ');
+
+    const shareText = `🔮 타로 상담 결과
+
+고민: ${concern}
+카드: ${cardsList}
+
+#타로 #타로상담`;
+
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: '타로 상담 결과',
+          text: shareText
+        });
+      } catch (err) {
+        console.log('공유 취소');
+      }
+    } else {
+      navigator.clipboard.writeText(shareText);
+      alert('클립보드에 복사되었습니다!');
+    }
+  };
+
+  const handleReset = () => {
+    setStep('input');
+    setConcern('');
+    setSessionTitle('');
+    setDisplayTitle('');
+    setMessages([]);
+    setDrawnCards([]);
+    setStreamingMessage('');
+    setCurrentSessionId(null);
+  };
+
+  const addMessage = (role, content) => {
+    setMessages(prev => [...prev, { role, content }]);
+  };
+
+  if (step === 'loading') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 100%)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        color: '#006064'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: '60px', marginBottom: '20px' }}>🔮</div>
+          <div style={{ fontSize: '18px' }}>로딩중...</div>
+          <div style={{ fontSize: '14px', marginTop: '10px', color: '#00838F' }}>
+            카드 데이터 불러오는 중...
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'name_input') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 100%)',
+        color: '#006064',
+        padding: '30px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'system-ui, -apple-system, sans-serif'
+      }}>
+        <div style={{ maxWidth: '400px', width: '100%' }}>
+          
+          <div style={{
+            position: 'fixed',
+            top: '12px',
+            right: '12px',
+            background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
+            padding: '8px 16px',
+            borderRadius: '20px',
+            fontWeight: 'bold',
+            fontSize: '13px',
+            color: 'white',
+            boxShadow: '0 4px 15px rgba(0, 172, 193, 0.4)',
+            zIndex: 1000
+          }}>
+            무료판
+          </div>
+
+          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+            <div style={{ fontSize: '80px', marginBottom: '20px' }}>🔮</div>
+            <h1 style={{ fontSize: '28px', marginBottom: '12px', margin: 0 }}>
+              환영합니다!
+            </h1>
+            <p style={{ color: '#00838F', fontSize: '15px', lineHeight: '1.6' }}>
+              처음 오셨네요!<br/>
+              타로 상담을 시작하기 전에<br/>
+              이름을 알려주세요
+            </p>
+          </div>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            padding: '30px',
+            boxShadow: '0 10px 40px rgba(0, 172, 193, 0.2)'
+          }}>
+            <input
+              type="text"
+              value={tempName}
+              onChange={(e) => setTempName(e.target.value)}
+              placeholder="이름을 입력하세요"
+              onKeyPress={(e) => e.key === 'Enter' && handleNameSubmit()}
+              style={{
+                width: '100%',
+                padding: '16px',
+                borderRadius: '12px',
+                border: '2px solid #B2EBF2',
+                background: '#E0F7FA',
+                color: '#006064',
+                fontSize: '16px',
+                fontFamily: 'inherit',
+                marginBottom: '16px',
+                boxSizing: 'border-box',
+                textAlign: 'center',
+                fontWeight: 'bold'
+              }}
+            />
+            
+            <button
+              onClick={handleNameSubmit}
+              disabled={!tempName.trim()}
+              style={{
+                width: '100%',
+                padding: '16px',
+                borderRadius: '12px',
+                border: 'none',
+                background: tempName.trim() ? 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)' : '#B2EBF2',
+                color: 'white',
+                fontSize: '17px',
+                fontWeight: 'bold',
+                cursor: tempName.trim() ? 'pointer' : 'not-allowed',
+                transition: 'all 0.3s',
+                boxShadow: tempName.trim() ? '0 4px 15px rgba(0, 172, 193, 0.3)' : 'none'
+              }}
+            >
+              시작하기
+            </button>
+          </div>
+
+          <div style={{
+            marginTop: '30px',
+            padding: '20px',
+            background: 'white',
+            borderRadius: '15px',
+            textAlign: 'center',
+            fontSize: '13px',
+            color: '#00838F',
+            boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)',
+            lineHeight: '1.6'
+          }}>
+            이름은 안전하게 저장되며<br/>
+            다음 방문 시 자동으로 불러옵니다
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'input') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 100%)',
+        color: '#006064',
+        padding: '16px',
+        fontFamily: 'system-ui, -apple-system, sans-serif'
+      }}>
+        <div style={{ maxWidth: '500px', margin: '0 auto' }}>
+          
+          <div style={{
+            position: 'fixed',
+            top: '12px',
+            right: '12px',
+            background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
+            padding: '8px 16px',
+            borderRadius: '20px',
+            fontWeight: 'bold',
+            fontSize: '13px',
+            color: 'white',
+            boxShadow: '0 4px 15px rgba(0, 172, 193, 0.4)',
+            zIndex: 1000
+          }}>
+            무료판
+          </div>
+
+          <div style={{ textAlign: 'center', marginBottom: '30px', paddingTop: '50px' }}>
+            <div style={{ fontSize: '60px', marginBottom: '16px' }}>🔮</div>
+            <h1 style={{ fontSize: '26px', marginBottom: '8px', margin: '0 0 8px 0' }}>
+              {visitCount === 1 ? (
+                `${userName}님, 환영합니다!`
+              ) : (
+                `${userName}님, 다시 오셨네요!`
+              )}
+            </h1>
+            <p style={{ color: '#00838F', fontSize: '14px', margin: 0 }}>
+              {visitCount === 1 ? (
+                '처음 오셨네요! 무료로 타로를 체험해보세요'
+              ) : pastSessions.length > 0 ? (
+                `${visitCount}번째 방문 • 지난번 ${pastSessions[0].title}`
+              ) : (
+                `${visitCount}번째 방문입니다`
+              )}
+            </p>
+            {allCards.length > 0 && (
+              <div style={{ fontSize: '12px', color: '#00ACC1', marginTop: '5px' }}>
+                카드 {allCards.length}장 준비 완료
+              </div>
+            )}
+          </div>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '16px',
+            padding: '20px',
+            boxShadow: '0 10px 40px rgba(0, 172, 193, 0.2)'
+          }}>
+            <textarea
+              value={concern}
+              onChange={(e) => setConcern(e.target.value)}
+              placeholder="오늘은 어떤 고민이 있으신가요?"
+              style={{
+                width: '100%',
+                minHeight: '100px',
+                maxHeight: '180px',
+                padding: '14px',
+                borderRadius: '12px',
+                border: '2px solid #B2EBF2',
+                background: '#E0F7FA',
+                color: '#006064',
+                fontSize: '15px',
+                resize: 'vertical',
+                fontFamily: 'inherit',
+                marginBottom: '14px',
+                boxSizing: 'border-box'
+              }}
+            />
+            
+            <button
+              onClick={handleStartConsultation}
+              disabled={!concern.trim() || allCards.length === 0}
+              style={{
+                width: '100%',
+                padding: '14px',
+                borderRadius: '12px',
+                border: 'none',
+                background: (concern.trim() && allCards.length > 0) ? 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)' : '#B2EBF2',
+                color: 'white',
+                fontSize: '16px',
+                fontWeight: 'bold',
+                cursor: (concern.trim() && allCards.length > 0) ? 'pointer' : 'not-allowed',
+                transition: 'all 0.3s',
+                boxShadow: (concern.trim() && allCards.length > 0) ? '0 4px 15px rgba(0, 172, 193, 0.3)' : 'none'
+              }}
+            >
+              {allCards.length === 0 ? '카드 로딩 중...' : '상담 시작하기'}
+            </button>
+          </div>
+
+          {pastSessions.length > 0 && (
+            <div style={{ marginTop: '30px' }}>
+              <h3 style={{ marginBottom: '16px', color: '#00838F', fontSize: '16px', margin: '0 0 16px 0' }}>
+                과거 상담 내역
+              </h3>
+              {pastSessions.slice(0, 5).map((session) => (
+                <div
+                  key={session.id}
+                  style={{
+                    background: 'white',
+                    padding: '14px',
+                    borderRadius: '12px',
+                    marginBottom: '12px',
+                    boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)'
+                  }}
+                >
+                  <div style={{ marginBottom: '8px', color: '#00ACC1', fontWeight: 'bold', fontSize: '13px' }}>
+                    {new Date(session.created_at).toLocaleDateString()}
+                  </div>
+                  <div style={{ marginBottom: '8px', color: '#006064', fontSize: '14px' }}>{session.title}</div>
+                  <div style={{ fontSize: '12px', color: '#00838F' }}>
+                    {session.cards_drawn}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (step === 'consultation') {
+    return (
+      <div style={{
+        height: '100vh',
+        display: 'flex',
+        flexDirection: 'column',
+        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 100%)',
+        color: '#006064'
+      }}>
+        <div style={{
+          padding: '14px 16px',
+          borderBottom: '2px solid #80DEEA',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          background: 'white',
+          boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)'
+        }}>
+          <button
+            onClick={handleReset}
+            style={{
+              background: 'none',
+              border: 'none',
+              color: '#00ACC1',
+              cursor: 'pointer',
+              fontSize: '20px',
+              padding: '4px'
+            }}
+          >
+            <ArrowLeft />
+          </button>
+          <div style={{ flex: 1, textAlign: 'center', fontSize: '14px', padding: '0 12px', color: '#006064', fontWeight: 'bold' }}>
+            {displayTitle || concern}
+          </div>
+          <div style={{ width: '28px' }}></div>
+        </div>
+
+        {drawnCards.length > 0 && (
+          <div style={{
+            padding: '12px 16px',
+            borderBottom: '2px solid #80DEEA',
+            background: 'white',
+            overflowX: 'auto',
+            whiteSpace: 'nowrap',
+            boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)'
+          }}>
+            <div style={{ fontSize: '11px', color: '#00838F', marginBottom: '8px' }}>
+              뽑힌 카드 ({drawnCards.length}장)
+            </div>
+            {drawnCards.map((card, idx) => (
+              <span
+                key={idx}
+                style={{
+                  display: 'inline-block',
+                  padding: '6px 12px',
+                  background: '#E0F7FA',
+                  border: '2px solid #00ACC1',
+                  borderRadius: '16px',
+                  marginRight: '8px',
+                  fontSize: '13px',
+                  color: '#006064',
+                  fontWeight: 'bold'
+                }}
+              >
+                {card.name_korean} {card.isReversed ? '(역)' : ''}
+              </span>
+            ))}
+          </div>
+        )}
+
+        <div style={{
+          flex: 1,
+          overflowY: 'auto',
+          padding: '16px'
+        }}>
+          {messages.map((msg, idx) => (
+            <div
+              key={idx}
+              style={{
+                marginBottom: '12px',
+                display: 'flex',
+                justifyContent: msg.role === 'user' ? 'flex-end' : 'flex-start'
+              }}
+            >
+              <div style={{
+                maxWidth: '85%',
+                padding: '12px 16px',
+                borderRadius: '16px',
+                background: msg.role === 'user' ? '#00ACC1' : 'white',
+                color: msg.role === 'user' ? 'white' : '#006064',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                boxShadow: '0 2px 10px rgba(0, 172, 193, 0.15)',
+                fontSize: '14px',
+                lineHeight: '1.5'
+              }}>
+                {msg.content}
+              </div>
+            </div>
+          ))}
+
+          {streamingMessage && (
+            <div style={{
+              marginBottom: '12px',
+              display: 'flex',
+              justifyContent: 'flex-start'
+            }}>
+              <div style={{
+                maxWidth: '85%',
+                padding: '12px 16px',
+                borderRadius: '16px',
+                background: 'white',
+                color: '#006064',
+                whiteSpace: 'pre-wrap',
+                wordBreak: 'break-word',
+                boxShadow: '0 2px 10px rgba(0, 172, 193, 0.15)',
+                fontSize: '14px',
+                lineHeight: '1.5'
+              }}>
+                {streamingMessage}
+              </div>
+            </div>
+          )}
+
+          {isTyping && !streamingMessage && (
+            <div style={{ color: '#00838F', fontStyle: 'italic', fontSize: '13px' }}>
+              입력 중...
+            </div>
+          )}
+
+          <div ref={messagesEndRef} />
+        </div>
+
+        {drawnCards.length >= 3 && !isTyping && (
+          <div style={{
+            padding: '12px 16px',
+            borderTop: '2px solid #80DEEA',
+            display: 'flex',
+            gap: '8px',
+            flexWrap: 'wrap',
+            background: 'white',
+            boxShadow: '0 -2px 10px rgba(0, 172, 193, 0.1)'
+          }}>
+            <button
+              onClick={handleSubdeck}
+              style={{
+                flex: 1,
+                minWidth: '100px',
+                padding: '12px',
+                borderRadius: '10px',
+                border: '2px solid #00ACC1',
+                background: 'white',
+                color: '#00ACC1',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                transition: 'all 0.3s',
+                fontSize: '13px'
+              }}
+            >
+              보조덱
+            </button>
+            
+            <button
+              onClick={handleAdvice}
+              style={{
+                flex: 1,
+                minWidth: '100px',
+                padding: '12px',
+                borderRadius: '10px',
+                border: '2px solid #00ACC1',
+                background: 'white',
+                color: '#00ACC1',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                transition: 'all 0.3s',
+                fontSize: '13px'
+              }}
+            >
+              조언
+            </button>
+            
+            <button
+              onClick={handleFortune}
+              style={{
+                flex: 1,
+                minWidth: '100px',
+                padding: '12px',
+                borderRadius: '10px',
+                border: '2px solid #00ACC1',
+                background: 'white',
+                color: '#00ACC1',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                transition: 'all 0.3s',
+                fontSize: '13px'
+              }}
+            >
+              개운법
+            </button>
+            
+            <button
+              onClick={handleEndConsultation}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '10px',
+                border: 'none',
+                background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
+                color: 'white',
+                cursor: 'pointer',
+                fontWeight: 'bold',
+                boxShadow: '0 4px 15px rgba(0, 172, 193, 0.3)',
+                fontSize: '14px'
+              }}
+            >
+              상담 종료
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  if (step === 'finished') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 50%, #80DEEA 100%)',
+        color: '#006064',
+        padding: '30px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center'
+      }}>
+        <div style={{ fontSize: '60px', marginBottom: '16px' }}>✨</div>
+        <h1 style={{ fontSize: '26px', marginBottom: '16px', margin: '0 0 16px 0' }}>
+          상담이 완료되었습니다!
+        </h1>
+        <p style={{ color: '#00838F', marginBottom: '30px', fontSize: '16px', margin: '0 0 30px 0' }}>
+          좋은 하루 보내세요
         </p>
-        <a
-          className="App-link"
-          href="https://reactjs.org"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          Learn React
-        </a>
-      </header>
-    </div>
-  );
+        
+        <div style={{ display: 'flex', gap: '12px', flexDirection: 'column', width: '100%', maxWidth: '300px' }}>
+          <button
+            onClick={handleShare}
+            style={{
+              padding: '12px 24px',
+              borderRadius: '10px',
+              border: '2px solid #00ACC1',
+              background: 'white',
+              color: '#00ACC1',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '15px',
+              transition: 'all 0.3s'
+            }}
+          >
+            공유하기
+          </button>
+          
+          <button
+            onClick={handleReset}
+            style={{
+              padding: '12px 24px',
+              borderRadius: '10px',
+              border: 'none',
+              background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
+              color: 'white',
+              cursor: 'pointer',
+              fontWeight: 'bold',
+              fontSize: '15px',
+              boxShadow: '0 4px 15px rgba(0, 172, 193, 0.3)'
+            }}
+          >
+            처음으로
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return null;
 }
 
 export default App;
