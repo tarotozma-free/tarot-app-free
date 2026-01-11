@@ -7,9 +7,9 @@ import './App.css';
 const APP_VERSION = 'FREE';
 
 // Supabase 설정 - 환경변수에서 가져오기
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
-const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
+const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
+const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
 // 환경변수 체크
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !GEMINI_API_KEY) {
