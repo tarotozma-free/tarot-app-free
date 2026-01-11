@@ -4,34 +4,31 @@ import { ArrowLeft } from 'lucide-react';
 import './App.css';
 
 // ========== 버전 설정 ==========
+const APP_VERSION = 'FREE';
 
 // Supabase 설정 - 환경변수에서 가져오기
-const APP_VERSION = 'FREE';
-const CARD_TYPE = process.env.REACT_APP_CARD_TYPE;
-
 const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
 const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
 const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
-if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !GEMINI_API_KEY || !CARD_TYPE) {
-  console.error('❌ 환경변수가 설정되지 않았습니다!');
-  console.log('REACT_APP_SUPABASE_URL:', SUPABASE_URL ? '✅' : '❌');
-  console.log('REACT_APP_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? '✅' : '❌');
-  console.log('REACT_APP_GEMINI_API_KEY:', GEMINI_API_KEY ? '✅' : '❌');
-  console.log('REACT_APP_CARD_TYPE:', CARD_TYPE ? '✅' : '❌');
+// 환경변수 체크
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !GEMINI_API_KEY) {
+  console.error('환경변수가 설정되지 않았습니다!');
+  console.log('VITE_SUPABASE_URL:', SUPABASE_URL ? '✅' : '❌');
+  console.log('VITE_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? '✅' : '❌');
+  console.log('VITE_GEMINI_API_KEY:', GEMINI_API_KEY ? '✅' : '❌');
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-// ========== 사용자 ID 관리 (카드 타입별) ==========
-const getUserId = (cardType) => {
-  const storageKey = `tarot_user_id_${cardType}`;
-  let userId = localStorage.getItem(storageKey);
+// ========== 사용자 ID 관리 ==========
+const getUserId = () => {
+  let userId = localStorage.getItem('tarot_user_id');
   
   if (!userId) {
     userId = 'free_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
-    localStorage.setItem(storageKey, userId);
-    console.log(`새로운 사용자 ID 생성 (${cardType}):`, userId);
+    localStorage.setItem('tarot_user_id', userId);
+    console.log('새로운 사용자 ID 생성:', userId);
   }
   
   return userId;
@@ -72,17 +69,13 @@ function App() {
 
   const initializeUser = async () => {
     try {
-      // 카드 타입별 사용자 ID
-      const id = getUserId(CARD_TYPE);
+      const id = getUserId();
       setUserId(id);
 
-      // 카드 타입별 방문 횟수
-      const visitCountKey = `tarot_visit_count_${CARD_TYPE}`;
-      const count = parseInt(localStorage.getItem(visitCountKey) || '0') + 1;
-      localStorage.setItem(visitCountKey, count.toString());
+      const count = parseInt(localStorage.getItem('tarot_visit_count') || '0') + 1;
+      localStorage.setItem('tarot_visit_count', count.toString());
       setVisitCount(count);
 
-      // 이름은 전체 공통
       const savedName = localStorage.getItem('tarot_user_name');
       
       if (savedName) {
@@ -98,18 +91,18 @@ function App() {
       const { data: cards, error } = await supabase
         .from('tarot_cards')
         .select('*')
-        .eq('card_type', CARD_TYPE)
+        .eq('card_type', '만신카드')
         .order('card_num');
       
       if (error) {
         console.error('카드 로드 오류 상세:', error);
         alert('카드 데이터를 불러오는데 실패했습니다.\n\n에러: ' + error.message);
       } else if (cards && cards.length > 0) {
-        console.log('${CARD_TYPE} 로드 성공:', cards.length + '장');
+        console.log('만신카드 로드 성공:', cards.length + '장');
         setAllCards(cards);
       } else {
-        console.error('${CARD_TYPE} 데이터가 비어있습니다');
-        alert('${CARD_TYPE} 데이터가 없습니다. DB를 확인해주세요.');
+        console.error('만신카드 데이터가 비어있습니다');
+        alert('만신카드 데이터가 없습니다. DB를 확인해주세요.');
       }
     } catch (err) {
       console.error('초기화 오류:', err);
@@ -125,7 +118,6 @@ function App() {
         .select('*')
         .eq('free_user_id', userId)
         .eq('version_type', 'free')
-        .eq('card_type', CARD_TYPE)  // 카드 타입별 필터 추가
         .order('created_at', { ascending: false })
         .limit(10);
       
@@ -133,7 +125,7 @@ function App() {
         console.error('과거 상담 로드 오류:', error);
       } else if (sessions) {
         setPastSessions(sessions);
-        console.log(`과거 상담 로드 (${CARD_TYPE}):`, sessions.length + '개');
+        console.log('과거 상담 로드:', sessions.length + '개');
       }
     } catch (err) {
       console.error('데이터 로드 오류:', err);
@@ -698,7 +690,6 @@ ${newCard.name}
           free_user_id: userId,
           free_user_name: userName,
           version_type: 'free',
-          card_type: CARD_TYPE,  // 카드 타입 추가
           title: sessionTitle,
           concern: concern,
           cards_drawn: cardsList,
@@ -711,7 +702,7 @@ ${newCard.name}
         console.error('저장 오류:', error);
       } else if (data) {
         setCurrentSessionId(data.id);
-        console.log(`상담 저장 완료 (${CARD_TYPE}):`, data.id);
+        console.log('상담 저장 완료:', data.id);
       }
     } catch (err) {
       console.error('저장 오류:', err);
@@ -800,7 +791,7 @@ ${conversationText}
           <div style={{ fontSize: '60px', marginBottom: '20px' }}>🔮</div>
           <div style={{ fontSize: '18px' }}>로딩중...</div>
           <div style={{ fontSize: '14px', marginTop: '10px', color: '#00838F' }}>
-          {CARD_TYPE}  불러오는 중...
+            만신카드 불러오는 중...
           </div>
         </div>
       </div>
@@ -946,27 +937,7 @@ ${conversationText}
           </div>
 
           <div style={{ textAlign: 'center', marginBottom: '30px', paddingTop: '50px' }}>
-            <div style={{ fontSize: '60px', marginBottom: '12px' }}>🔮</div>
-            
-            {/* 카드 타입 표시 */}
-            <div style={{ 
-              fontSize: '18px', 
-              fontWeight: 'bold', 
-              color: '#00ACC1',
-              marginBottom: '4px'
-            }}>
-              {CARD_TYPE} 타로
-            </div>
-            <div style={{ 
-              fontSize: '12px', 
-              color: '#00838F',
-              marginBottom: '16px',
-              fontStyle: 'italic',
-              opacity: 0.8
-            }}>
-              {CARD_TYPE} Tarot Reading
-            </div>
-            
+            <div style={{ fontSize: '60px', marginBottom: '16px' }}>🔮</div>
             <h1 style={{ fontSize: '26px', marginBottom: '8px', margin: '0 0 8px 0' }}>
               {visitCount === 1 ? (
                 `${userName}님, 환영합니다!`
@@ -985,7 +956,7 @@ ${conversationText}
             </p>
             {allCards.length > 0 && (
               <div style={{ fontSize: '12px', color: '#00ACC1', marginTop: '5px' }}>
-                {allCards.length}장 준비 완료
+                만신카드 {allCards.length}장 준비 완료
               </div>
             )}
           </div>
@@ -1034,7 +1005,7 @@ ${conversationText}
                 boxShadow: (concern.trim() && allCards.length > 0) ? '0 4px 15px rgba(0, 172, 193, 0.3)' : 'none'
               }}
             >
-              {allCards.length === 0 ? '${CARD_TYPE} 로딩 중...' : '상담 시작하기'}
+              {allCards.length === 0 ? '만신카드 로딩 중...' : '상담 시작하기'}
             </button>
           </div>
 
@@ -1117,7 +1088,7 @@ ${conversationText}
             boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)'
           }}>
             <div style={{ fontSize: '11px', color: '#00838F', marginBottom: '8px' }}>
-              뽑힌 {CARD_TYPE} ({drawnCards.length}장)
+              뽑힌 만신카드 ({drawnCards.length}장)
             </div>
             {drawnCards.map((card, idx) => (
               <span
