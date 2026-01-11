@@ -3,20 +3,20 @@ import { createClient } from '@supabase/supabase-js';
 import { ArrowLeft } from 'lucide-react';
 import './App.css';
 
-// 수정된 코드
+// ========== 버전 설정 ==========
 const APP_VERSION = 'FREE';
 
-// 환경변수에서 가져오기
-const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
-const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
-const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
+// Supabase 설정 - 환경변수에서 가져오기
+const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API_KEY;
 
 // 환경변수 체크
 if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !GEMINI_API_KEY) {
   console.error('환경변수가 설정되지 않았습니다!');
-  console.log('REACT_APP_SUPABASE_URL:', SUPABASE_URL ? '✅' : '❌');
-  console.log('REACT_APP_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? '✅' : '❌');
-  console.log('REACT_APP_GEMINI_API_KEY:', GEMINI_API_KEY ? '✅' : '❌');
+  console.log('VITE_SUPABASE_URL:', SUPABASE_URL ? '✅' : '❌');
+  console.log('VITE_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? '✅' : '❌');
+  console.log('VITE_GEMINI_API_KEY:', GEMINI_API_KEY ? '✅' : '❌');
 }
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -52,6 +52,7 @@ function App() {
   const [pastSessions, setPastSessions] = useState([]);
   const [visitCount, setVisitCount] = useState(0);
   const [currentCardIndex, setCurrentCardIndex] = useState(0); // 현재 뽑고 있는 카드 인덱스
+  const [finalReadingComplete, setFinalReadingComplete] = useState(false); // 총평 완료 여부
   const messagesEndRef = useRef(null);
 
   useEffect(() => {
@@ -400,6 +401,7 @@ ${card.name} 카드가 보여주는 앞으로의 흐름을 설명해주세요.
   // 총평 + 보조덱 유도
   const giveFinalReading = async (allDrawnCards) => {
     setIsTyping(true);
+    setIsStreaming(true);
     
     const cardDescriptions = allDrawnCards.map((card, idx) => {
       const position = idx === 0 ? '과거/현재' : idx === 1 ? '내면/감정' : '미래/결과';
@@ -422,9 +424,49 @@ ${cardDescriptions}
 - "~네요", "~같아요" 사용
 - 마지막에 "혹시 더 궁금한 부분이 있다면 보조덱을 뽑아볼까요?" 같은 유도 멘트 추가`;
 
-    const response = await callGeminiAPI(prompt);
-    addMessage('assistant', response);
-    setIsTyping(false);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.9,
+              topP: 0.95,
+              topK: 40,
+              maxOutputTokens: 250
+            }
+          })
+        }
+      );
+
+      const data = await response.json();
+      const fullText = data.candidates[0].content.parts[0].text;
+
+      // 스트리밍 효과
+      let currentText = '';
+      for (let i = 0; i < fullText.length; i++) {
+        currentText += fullText[i];
+        setStreamingMessage(currentText);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      addMessage('assistant', fullText);
+      setStreamingMessage('');
+      setIsStreaming(false);
+      setIsTyping(false);
+      
+      // 총평 완료!
+      setFinalReadingComplete(true);
+      
+    } catch (error) {
+      console.error('총평 오류:', error);
+      addMessage('assistant', '총평 중 오류가 발생했습니다.');
+      setIsStreaming(false);
+      setIsTyping(false);
+    }
   };
 
   const handleSubdeck = async () => {
@@ -444,6 +486,8 @@ ${cardDescriptions}
     addMessage('assistant', `추가 카드 ${cardNum - 3}번: ${newCard.name}`);
 
     setIsTyping(true);
+    setIsStreaming(true);
+    
     const prompt = `내담자의 고민: "${concern}"
 
 기존에 뽑은 카드들이 있고, 추가로 이 카드가 나왔습니다:
@@ -451,15 +495,57 @@ ${newCard.name}
 키워드: ${newCard.keyword}
 의미: ${newCard.meaning}
 
-이 카드가 추가로 전하는 메시지를 간결하게 설명해주세요.`;
+이 카드가 추가로 전하는 메시지를 간결하게 설명해주세요.
 
-    const response = await callGeminiAPI(prompt);
-    addMessage('assistant', response);
+요구사항:
+- 50자 내외로 짧게
+- "~네요", "~같아요" 사용`;
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.9,
+              topP: 0.95,
+              topK: 40,
+              maxOutputTokens: 100
+            }
+          })
+        }
+      );
+
+      const data = await response.json();
+      const fullText = data.candidates[0].content.parts[0].text;
+
+      // 스트리밍 효과
+      let currentText = '';
+      for (let i = 0; i < fullText.length; i++) {
+        currentText += fullText[i];
+        setStreamingMessage(currentText);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      addMessage('assistant', fullText);
+      setStreamingMessage('');
+      
+    } catch (error) {
+      console.error('보조덱 오류:', error);
+      addMessage('assistant', '해석 중 오류가 발생했습니다.');
+    }
+    
+    setIsStreaming(false);
     setIsTyping(false);
   };
 
   const handleAdvice = async () => {
     setIsTyping(true);
+    setIsStreaming(true);
+    
     const cardDescriptions = drawnCards.map((card) => {
       return card.name;
     }).join(', ');
@@ -468,15 +554,57 @@ ${newCard.name}
 뽑힌 카드: ${cardDescriptions}
 
 카드를 바탕으로 내담자에게 따뜻하고 실질적인 조언을 해주세요.
-구체적인 행동 방안을 포함해주세요.`;
 
-    const response = await callGeminiAPI(prompt);
-    addMessage('assistant', response);
+요구사항:
+- 50자 내외로 간결하게
+- 구체적인 행동 1가지
+- "~네요", "~세요" 사용`;
+
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.9,
+              topP: 0.95,
+              topK: 40,
+              maxOutputTokens: 100
+            }
+          })
+        }
+      );
+
+      const data = await response.json();
+      const fullText = data.candidates[0].content.parts[0].text;
+
+      // 스트리밍 효과
+      let currentText = '';
+      for (let i = 0; i < fullText.length; i++) {
+        currentText += fullText[i];
+        setStreamingMessage(currentText);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      addMessage('assistant', fullText);
+      setStreamingMessage('');
+      
+    } catch (error) {
+      console.error('조언 오류:', error);
+      addMessage('assistant', '조언 중 오류가 발생했습니다.');
+    }
+    
+    setIsStreaming(false);
     setIsTyping(false);
   };
 
   const handleFortune = async () => {
     setIsTyping(true);
+    setIsStreaming(true);
+    
     const cardDescriptions = drawnCards.map((card) => {
       return card.name;
     }).join(', ');
@@ -484,15 +612,50 @@ ${newCard.name}
     const prompt = `뽑힌 카드: ${cardDescriptions}
 
 이 카드들을 바탕으로 운을 개선할 수 있는 개운법을 알려주세요.
-- 추천 색상
-- 행운의 숫자
-- 도움되는 행동
-- 피해야 할 것
 
-간결하고 실천 가능하게 작성해주세요.`;
+요구사항:
+- 50자 내외로 짧게
+- 추천 색상 또는 행동 1가지만
+- "~해보세요" 사용`;
 
-    const response = await callGeminiAPI(prompt);
-    addMessage('assistant', response);
+    try {
+      const response = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash-exp:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: prompt }] }],
+            generationConfig: {
+              temperature: 0.9,
+              topP: 0.95,
+              topK: 40,
+              maxOutputTokens: 100
+            }
+          })
+        }
+      );
+
+      const data = await response.json();
+      const fullText = data.candidates[0].content.parts[0].text;
+
+      // 스트리밍 효과
+      let currentText = '';
+      for (let i = 0; i < fullText.length; i++) {
+        currentText += fullText[i];
+        setStreamingMessage(currentText);
+        await new Promise(resolve => setTimeout(resolve, 20));
+      }
+
+      addMessage('assistant', fullText);
+      setStreamingMessage('');
+      
+    } catch (error) {
+      console.error('개운법 오류:', error);
+      addMessage('assistant', '개운법 생성 중 오류가 발생했습니다.');
+    }
+    
+    setIsStreaming(false);
     setIsTyping(false);
   };
 
@@ -552,26 +715,48 @@ ${newCard.name}
 
   const handleShare = async () => {
     const cardsList = drawnCards.map(c => c.name).join(', ');
+    
+    // 전체 대화 내용 추출
+    const conversationText = messages
+      .filter(m => m.role === 'assistant')
+      .map(m => m.content)
+      .join('\n\n');
 
     const shareText = `🔮 타로 상담 결과
 
-고민: ${concern}
-카드: ${cardsList}
+📝 고민: ${concern}
 
-#타로 #타로상담`;
+🃏 뽑힌 카드: ${cardsList}
 
+💬 상담 내용:
+${conversationText}
+
+#타로 #타로상담 #만신카드`;
+
+    // 모바일 공유 API 지원 확인
     if (navigator.share) {
       try {
         await navigator.share({
-          title: '타로 상담 결과',
+          title: '🔮 타로 상담 결과',
           text: shareText
         });
+        console.log('공유 성공!');
       } catch (err) {
-        console.log('공유 취소');
+        if (err.name !== 'AbortError') {
+          // 취소가 아닌 다른 에러면 클립보드로
+          await navigator.clipboard.writeText(shareText);
+          alert('클립보드에 복사되었습니다!');
+        }
       }
     } else {
-      navigator.clipboard.writeText(shareText);
-      alert('클립보드에 복사되었습니다!');
+      // 공유 API 미지원 시 클립보드
+      try {
+        await navigator.clipboard.writeText(shareText);
+        alert('전체 상담 내용이 클립보드에 복사되었습니다!\n원하는 곳에 붙여넣기 하세요.');
+      } catch (err) {
+        console.error('클립보드 복사 실패:', err);
+        alert('공유 기능을 사용할 수 없습니다.');
+      }
     }
   };
 
@@ -585,6 +770,7 @@ ${newCard.name}
     setStreamingMessage('');
     setCurrentSessionId(null);
     setCurrentCardIndex(0);
+    setFinalReadingComplete(false);
   };
 
   const addMessage = (role, content) => {
@@ -988,7 +1174,7 @@ ${newCard.name}
           <div ref={messagesEndRef} />
         </div>
 
-        {drawnCards.length >= 3 && !isTyping && (
+        {finalReadingComplete && !isTyping && (
           <div style={{
             padding: '12px 16px',
             borderTop: '2px solid #80DEEA',
