@@ -3,15 +3,21 @@ import { createClient } from '@supabase/supabase-js';
 import { ArrowLeft } from 'lucide-react';
 import './App.css';
 
-// ========== 버전 설정 ==========
+// 수정된 코드
 const APP_VERSION = 'FREE';
 
-// Supabase 설정
-const SUPABASE_URL = 'https://tvhrlongbpykqksegkbm.supabase.co';
+// 환경변수에서 가져오기
+const SUPABASE_URL = process.env.REACT_APP_SUPABASE_URL;
+const SUPABASE_ANON_KEY = process.env.REACT_APP_SUPABASE_ANON_KEY;
+const GEMINI_API_KEY = process.env.REACT_APP_GEMINI_API_KEY;
 
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InR2aHJsb25nYnB5a3Frc2Vna2JtIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njc4NjcyNzIsImV4cCI6MjA4MzQ0MzI3Mn0.qK3BpUpskuS4PB8lzxV-06n3P203RCLgOF91i9BU0Bc';
-
-const GEMINI_API_KEY = 'AIzaSyAQVqfq6oAdWCC_qvUJNGkm4HDZgJ4-DZ4';
+// 환경변수 체크
+if (!SUPABASE_URL || !SUPABASE_ANON_KEY || !GEMINI_API_KEY) {
+  console.error('환경변수가 설정되지 않았습니다!');
+  console.log('REACT_APP_SUPABASE_URL:', SUPABASE_URL ? '✅' : '❌');
+  console.log('REACT_APP_SUPABASE_ANON_KEY:', SUPABASE_ANON_KEY ? '✅' : '❌');
+  console.log('REACT_APP_GEMINI_API_KEY:', GEMINI_API_KEY ? '✅' : '❌');
+}
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
@@ -238,75 +244,103 @@ function App() {
     }, 1000);
 
     setTimeout(() => {
-      drawFirstCard();
+      drawAllCardsAtOnce();
     }, 2000);
   };
 
-  // 첫 번째 카드 뽑기
-  const drawFirstCard = async () => {
+  // 3장 한번에 뽑기 (로딩 1회)
+  const drawAllCardsAtOnce = async () => {
     addMessage('assistant', '카드를 섞고 있습니다...');
-    await new Promise(resolve => setTimeout(resolve, 1500));
+    await new Promise(resolve => setTimeout(resolve, 2000));
     
     const shuffled = [...allCards].sort(() => Math.random() - 0.5);
-    const card = shuffled[0];
+    const selectedCards = shuffled.slice(0, 3);
     
-    setDrawnCards([card]);
-    addMessage('assistant', `첫 번째 카드: ${card.name}`);
+    setDrawnCards(selectedCards);
+    console.log('3장 뽑기 완료:', selectedCards);
     
+    // 첫 번째 카드부터 하나씩 보여주기
     setTimeout(() => {
-      interpretSingleCard(card, 0);
+      revealAndInterpretCard(0, selectedCards);
     }, 1000);
   };
 
-  // 개별 카드 해석 (누적)
-  const interpretSingleCard = async (card, cardIndex) => {
+  // 카드 하나씩 공개하고 해석
+  const revealAndInterpretCard = async (cardIndex, allSelectedCards) => {
+    const card = allSelectedCards[cardIndex];
+    const cardLabel = cardIndex === 0 ? '첫 번째' : cardIndex === 1 ? '두 번째' : '세 번째';
+    
+    addMessage('assistant', `${cardLabel} 카드: ${card.name}`);
+    
+    setTimeout(() => {
+      interpretCard(cardIndex, allSelectedCards);
+    }, 1000);
+  };
+
+  // 개별 카드 해석 (간결하고 자연스럽게)
+  const interpretCard = async (cardIndex, allSelectedCards) => {
     setIsTyping(true);
     setIsStreaming(true);
 
+    const card = allSelectedCards[cardIndex];
     let prompt;
     
     if (cardIndex === 0) {
-      // 첫 번째 카드
-      prompt = `당신은 타로 마스터입니다.
+      // 과거/현재 위치
+      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
 
-내담자의 고민: "${concern}"
+내담자 고민: "${concern}"
 
-첫 번째 카드: ${card.name}
+뽑힌 카드: ${card.name}
 키워드: ${card.keyword}
 의미: ${card.meaning}
 
-이 카드가 현재 상황과 과거를 어떻게 나타내는지 해석해주세요.
-따뜻하고 공감하는 톤으로 작성해주세요.`;
+이 카드는 **과거/현재 상황**을 나타냅니다.
+${card.name} 카드가 보여주는 현재 상황을 자연스럽게 설명해주세요.
+
+요구사항:
+- 친구에게 말하듯 자연스럽고 따뜻하게
+- 100자 내외로 간결하게
+- AI투 딱딱한 말투 금지
+- "~입니다", "~됩니다" 같은 격식체보다는 "~네요", "~같아요" 사용`;
+      
     } else if (cardIndex === 1) {
-      // 두 번째 카드 (첫 번째 해석 이어서)
-      const firstCard = drawnCards[0];
-      prompt = `당신은 타로 마스터입니다.
+      // 내면/감정 위치
+      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
 
-내담자의 고민: "${concern}"
+내담자 고민: "${concern}"
 
-첫 번째 카드: ${firstCard.name}
-두 번째 카드: ${card.name} (새로 나온 카드)
+뽑힌 카드: ${card.name}
 키워드: ${card.keyword}
 의미: ${card.meaning}
 
-첫 번째 카드의 해석을 바탕으로, 두 번째 카드가 내담자의 내면 감정과 잠재의식을 어떻게 드러내는지 해석해주세요.
-두 카드가 어떻게 연결되는지도 설명해주세요.`;
+이 카드는 **내면의 감정/잠재의식**을 나타냅니다.
+${card.name} 카드가 보여주는 내담자의 숨겨진 마음을 설명해주세요.
+
+요구사항:
+- 친구에게 말하듯 자연스럽고 따뜻하게
+- 100자 내외로 간결하게
+- 앞 카드 내용 반복 금지
+- "~네요", "~같아요" 사용`;
+      
     } else {
-      // 세 번째 카드 (전체 누적)
-      const firstCard = drawnCards[0];
-      const secondCard = drawnCards[1];
-      prompt = `당신은 타로 마스터입니다.
+      // 미래/결과 위치
+      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
 
-내담자의 고민: "${concern}"
+내담자 고민: "${concern}"
 
-첫 번째 카드: ${firstCard.name}
-두 번째 카드: ${secondCard.name}
-세 번째 카드: ${card.name} (새로 나온 카드)
+뽑힌 카드: ${card.name}
 키워드: ${card.keyword}
 의미: ${card.meaning}
 
-앞의 두 카드 해석을 종합하고, 세 번째 카드가 미래와 결과를 어떻게 보여주는지 해석해주세요.
-세 카드의 전체적인 흐름과 메시지를 전달해주세요.`;
+이 카드는 **미래/결과**를 나타냅니다.
+${card.name} 카드가 보여주는 앞으로의 흐름을 설명해주세요.
+
+요구사항:
+- 친구에게 말하듯 자연스럽고 따뜻하게
+- 100자 내외로 간결하게
+- 앞 카드 내용 반복 금지
+- "~네요", "~같아요" 사용`;
     }
 
     try {
@@ -320,7 +354,8 @@ function App() {
             generationConfig: {
               temperature: 0.9,
               topP: 0.95,
-              topK: 40
+              topK: 40,
+              maxOutputTokens: 200
             }
           })
         }
@@ -343,16 +378,16 @@ function App() {
       setIsStreaming(false);
       setIsTyping(false);
 
-      // 다음 카드 뽑기 또는 총평
+      // 다음 카드 공개 또는 총평
       if (cardIndex < 2) {
         setTimeout(() => {
-          drawNextCard(cardIndex + 1);
-        }, 2000);
+          revealAndInterpretCard(cardIndex + 1, allSelectedCards);
+        }, 1500);
       } else {
-        // 3장 다 뽑았으면 총평
+        // 3장 다 해석했으면 총평
         setTimeout(() => {
-          giveFinalReading();
-        }, 2000);
+          giveFinalReading(allSelectedCards);
+        }, 1500);
       }
     } catch (error) {
       console.error('해석 오류:', error);
@@ -362,48 +397,33 @@ function App() {
     }
   };
 
-  // 다음 카드 뽑기
-  const drawNextCard = async (cardIndex) => {
-    addMessage('assistant', `${cardIndex === 1 ? '두' : '세'} 번째 카드를 뽑습니다...`);
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
-    const shuffled = [...allCards].sort(() => Math.random() - 0.5);
-    const usedCardIds = drawnCards.map(c => c.card_id);
-    const availableCards = shuffled.filter(c => !usedCardIds.includes(c.card_id));
-    const card = availableCards[0];
-    
-    setDrawnCards(prev => [...prev, card]);
-    addMessage('assistant', `${cardIndex === 1 ? '두' : '세'} 번째 카드: ${card.name}`);
-    
-    setTimeout(() => {
-      interpretSingleCard(card, cardIndex);
-    }, 1000);
-  };
-
-  // 총평
-  const giveFinalReading = async () => {
+  // 총평 + 보조덱 유도
+  const giveFinalReading = async (allDrawnCards) => {
     setIsTyping(true);
     
-    const cardDescriptions = drawnCards.map((card, idx) => {
-      return `${idx + 1}번째 카드: ${card.name}`;
+    const cardDescriptions = allDrawnCards.map((card, idx) => {
+      const position = idx === 0 ? '과거/현재' : idx === 1 ? '내면/감정' : '미래/결과';
+      return `${position}: ${card.name}`;
     }).join('\n');
 
-    const prompt = `당신은 타로 마스터입니다.
+    const prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
 
-내담자의 고민: "${concern}"
+내담자 고민: "${concern}"
 
 뽑힌 카드:
 ${cardDescriptions}
 
-지금까지의 해석을 종합하여 최종 총평을 해주세요.
-- 세 카드가 전체적으로 전하는 메시지
-- 내담자가 나아가야 할 방향
-- 희망적이고 따뜻한 마무리
+세 카드의 흐름을 종합하여 총평을 해주세요.
 
-총평:`;
+요구사항:
+- 친구에게 말하듯 자연스럽고 따뜻하게
+- 150자 내외로 간결하게
+- 희망적이고 긍정적으로 마무리
+- "~네요", "~같아요" 사용
+- 마지막에 "혹시 더 궁금한 부분이 있다면 보조덱을 뽑아볼까요?" 같은 유도 멘트 추가`;
 
     const response = await callGeminiAPI(prompt);
-    addMessage('assistant', '=== 총평 ===\n\n' + response);
+    addMessage('assistant', response);
     setIsTyping(false);
   };
 
@@ -477,11 +497,30 @@ ${newCard.name}
   };
 
   const handleEndConsultation = async () => {
-    addMessage('assistant', '상담을 종료합니다.');
+    // 총조언 먼저
+    setIsTyping(true);
+    
+    const cardsList = drawnCards.map(c => c.name).join(', ');
+    
+    const advicePrompt = `내담자 고민: "${concern}"
+뽑힌 카드: ${cardsList}
+
+상담을 마무리하며 내담자에게 따뜻한 격려와 실질적인 조언을 해주세요.
+
+요구사항:
+- 친구에게 말하듯 자연스럽게
+- 100자 내외
+- 희망적이고 긍정적으로
+- "~네요", "~세요" 사용`;
+
+    const finalAdvice = await callGeminiAPI(advicePrompt);
+    addMessage('assistant', finalAdvice);
+    setIsTyping(false);
+    
+    await new Promise(resolve => setTimeout(resolve, 1000));
+    addMessage('assistant', '상담을 종료합니다. 좋은 하루 보내세요! 😊');
 
     try {
-      const cardsList = drawnCards.map(c => c.name).join(', ');
-
       const { data, error } = await supabase
         .from('consultations')
         .insert([{
