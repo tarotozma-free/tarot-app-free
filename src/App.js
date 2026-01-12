@@ -76,20 +76,38 @@ function App() {
       const id = getUserId(CARD_TYPE);
       setUserId(id);
 
-      // 카드 타입별 방문 횟수
+      // 이름: 전체 공통
+      const savedName = localStorage.getItem('tarot_user_name');
+
+      // 카드 타입별 방문 횟수 (세션 기반)
       const visitCountKey = `tarot_visit_count_${CARD_TYPE}`;
-      const count = parseInt(localStorage.getItem(visitCountKey) || '0') + 1;
-      localStorage.setItem(visitCountKey, count.toString());
+      const sessionKey = `tarot_session_${CARD_TYPE}`;
+      const currentSession = sessionStorage.getItem(sessionKey);
+      
+      let count = parseInt(localStorage.getItem(visitCountKey) || '0');
+      
+      // 새 세션이면 카운트 증가
+      if (!currentSession) {
+        count = count + 1;
+        localStorage.setItem(visitCountKey, count.toString());
+        sessionStorage.setItem(sessionKey, 'active');
+      }
+      
       setVisitCount(count);
 
-      // 이름은 전체 공통
-      const savedName = localStorage.getItem('tarot_user_name');
-      
-      if (savedName) {
+      // 화면 분기
+      if (savedName && count > 1) {
+        // 이름 있고, 이 카드도 방문한 적 있음
         setUserName(savedName);
         await loadUserData(id);
         setStep('input');
+      } else if (savedName && count === 1) {
+        // 이름은 있지만, 이 카드는 첫 방문!
+        setUserName(savedName);
+        await loadUserData(id);
+        setStep('welcome');
       } else {
+        // 이름 없음 (완전 첫 방문)
         setStep('name_input');
       }
 
@@ -146,6 +164,7 @@ function App() {
       return;
     }
 
+    // 이름: 전체 공통으로 저장
     localStorage.setItem('tarot_user_name', tempName);
     setUserName(tempName);
 
@@ -155,13 +174,14 @@ function App() {
         .insert([{
           free_user_id: userId,
           name: tempName,
-          visit_count: 1
+          visit_count: 1,
+          card_type: CARD_TYPE  // 카드 타입도 저장
         }]);
       
       if (error) {
         console.error('사용자 저장 오류:', error);
       } else {
-        console.log('사용자 정보 저장 완료');
+        console.log(`사용자 정보 저장 완료 (${CARD_TYPE})`);
       }
     } catch (err) {
       console.error('사용자 저장 오류:', err);
@@ -296,9 +316,10 @@ function App() {
     
     if (cardIndex === 0) {
       // 과거/현재 위치
-      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
+      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다. 친구처럼 편안하지만 존중하는 말투로 대화해주세요.
 
-내담자 고민: "${concern}"
+${userName}님의 상황
+고민: "${concern}"
 
 뽑힌 카드: ${card.name}
 키워드: ${card.keyword}
@@ -307,49 +328,63 @@ function App() {
 이 카드는 **과거/현재 상황**을 나타냅니다.
 ${card.name} 카드가 보여주는 현재 상황을 자연스럽게 설명해주세요.
 
-요구사항:
-- 친구에게 말하듯 자연스럽고 따뜻하게
+필수 규칙:
+- 존중하는 반말: "~요", "~네요", "~같아요", "~해요" (너무 친한 반말 금지)
+- "${userName}님" 호칭 사용 (이름만 부르지 말 것)
+- 자연스러운 대화체: "어머, ${userName}님!" 같은 표현 활용
 - 100자 내외로 간결하게
-- AI투 딱딱한 말투 금지
-- "~입니다", "~됩니다" 같은 격식체보다는 "~네요", "~같아요" 사용`;
+- AI 티 나는 딱딱한 말투 절대 금지
+- 같은 내용 반복 금지`;
       
     } else if (cardIndex === 1) {
       // 내면/감정 위치
-      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
+      const previousCard = allSelectedCards[0];
+      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다. 친구처럼 편안하지만 존중하는 말투로 대화해주세요.
 
-내담자 고민: "${concern}"
+${userName}님의 상황
+고민: "${concern}"
 
-뽑힌 카드: ${card.name}
+첫 번째 카드: ${previousCard.name} (과거/현재)
+두 번째 카드: ${card.name} (내면/감정)
 키워드: ${card.keyword}
 의미: ${card.meaning}
 
 이 카드는 **내면의 감정/잠재의식**을 나타냅니다.
-${card.name} 카드가 보여주는 내담자의 숨겨진 마음을 설명해주세요.
+${previousCard.name}에서 본 상황 속에서 ${userName}님의 마음 깊은 곳에 어떤 감정이 있는지 자연스럽게 이어서 설명해주세요.
 
-요구사항:
-- 친구에게 말하듯 자연스럽고 따뜻하게
+필수 규칙:
+- 존중하는 반말: "~요", "~네요", "~같아요", "~해요"
+- "${userName}님" 호칭 필수 (이름만 부르지 말 것)
+- 첫 번째 카드와 자연스럽게 연결
 - 100자 내외로 간결하게
-- 앞 카드 내용 반복 금지
-- "~네요", "~같아요" 사용`;
+- 같은 내용 반복 절대 금지
+- 새로운 관점 제시`;
       
     } else {
       // 미래/결과 위치
-      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
+      const firstCard = allSelectedCards[0];
+      const secondCard = allSelectedCards[1];
+      prompt = `당신은 친근하고 따뜻한 타로 상담가입니다. 친구처럼 편안하지만 존중하는 말투로 대화해주세요.
 
-내담자 고민: "${concern}"
+${userName}님의 상황
+고민: "${concern}"
 
-뽑힌 카드: ${card.name}
+첫 번째 카드: ${firstCard.name} (과거/현재)
+두 번째 카드: ${secondCard.name} (내면/감정)
+세 번째 카드: ${card.name} (미래/결과)
 키워드: ${card.keyword}
 의미: ${card.meaning}
 
 이 카드는 **미래/결과**를 나타냅니다.
-${card.name} 카드가 보여주는 앞으로의 흐름을 설명해주세요.
+${firstCard.name}의 상황과 ${secondCard.name}의 마음이 만나 앞으로 어떤 흐름이 펼쳐질지 자연스럽게 이어서 설명해주세요.
 
-요구사항:
-- 친구에게 말하듯 자연스럽고 따뜻하게
+필수 규칙:
+- 존중하는 반말: "~요", "~네요", "~같아요", "~해요"
+- "${userName}님" 호칭 필수 (이름만 부르지 말 것)
+- 이전 카드들과 자연스럽게 연결된 스토리
 - 100자 내외로 간결하게
-- 앞 카드 내용 반복 금지
-- "~네요", "~같아요" 사용`;
+- 같은 내용 반복 절대 금지
+- 희망적이고 긍정적인 방향 제시`;
     }
 
     try {
@@ -416,21 +451,24 @@ ${card.name} 카드가 보여주는 앞으로의 흐름을 설명해주세요.
       return `${position}: ${card.name}`;
     }).join('\n');
 
-    const prompt = `당신은 친근하고 따뜻한 타로 상담가입니다.
+    const prompt = `당신은 친근하고 따뜻한 타로 상담가입니다. 친구처럼 편안하지만 존중하는 말투로 대화해주세요.
 
-내담자 고민: "${concern}"
+${userName}님의 상황
+고민: "${concern}"
 
 뽑힌 카드:
 ${cardDescriptions}
 
-세 카드의 흐름을 종합하여 총평을 해주세요.
+세 카드가 이어지는 스토리를 자연스럽게 종합하여 총평을 해주세요.
 
-요구사항:
-- 친구에게 말하듯 자연스럽고 따뜻하게
+필수 규칙:
+- 존중하는 반말: "~요", "~네요", "~같아요", "~해요"
+- "${userName}님" 호칭 필수 (이름만 부르지 말 것)
+- 과거→현재→미래로 흐르는 자연스러운 스토리
 - 150자 내외로 간결하게
 - 희망적이고 긍정적으로 마무리
-- "~네요", "~같아요" 사용
-- 마지막에 "혹시 더 궁금한 부분이 있다면 보조덱을 뽑아볼까요?" 같은 유도 멘트 추가`;
+- 마지막에 자연스럽게 보조덱 제안
+- 같은 내용 반복 절대 금지`;
 
     try {
       const response = await fetch(
@@ -496,7 +534,8 @@ ${cardDescriptions}
     setIsTyping(true);
     setIsStreaming(true);
     
-    const prompt = `내담자의 고민: "${concern}"
+    const prompt = `${userName}님의 상황
+고민: "${concern}"
 
 기존에 뽑은 카드들이 있고, 추가로 이 카드가 나왔습니다:
 ${newCard.name}
@@ -507,7 +546,8 @@ ${newCard.name}
 
 요구사항:
 - 50자 내외로 짧게
-- "~네요", "~같아요" 사용`;
+- "~네요", "~같아요" 사용
+- "${userName}님" 호칭 사용 가능`;
 
     try {
       const response = await fetch(
@@ -558,7 +598,8 @@ ${newCard.name}
       return card.name;
     }).join(', ');
 
-    const prompt = `내담자의 고민: "${concern}"
+    const prompt = `${userName}님의 상황
+고민: "${concern}"
 뽑힌 카드: ${cardDescriptions}
 
 카드를 바탕으로 내담자에게 따뜻하고 실질적인 조언을 해주세요.
@@ -566,7 +607,8 @@ ${newCard.name}
 요구사항:
 - 50자 내외로 간결하게
 - 구체적인 행동 1가지
-- "~네요", "~세요" 사용`;
+- "~네요", "~세요" 사용
+- "${userName}님" 호칭 사용 가능`;
 
     try {
       const response = await fetch(
@@ -617,14 +659,16 @@ ${newCard.name}
       return card.name;
     }).join(', ');
 
-    const prompt = `뽑힌 카드: ${cardDescriptions}
+    const prompt = `${userName}님의 상황
+뽑힌 카드: ${cardDescriptions}
 
 이 카드들을 바탕으로 운을 개선할 수 있는 개운법을 알려주세요.
 
 요구사항:
 - 50자 내외로 짧게
 - 추천 색상 또는 행동 1가지만
-- "~해보세요" 사용`;
+- "~해보세요" 사용
+- "${userName}님" 호칭 사용 가능`;
 
     try {
       const response = await fetch(
@@ -665,61 +709,6 @@ ${newCard.name}
     
     setIsStreaming(false);
     setIsTyping(false);
-  };
-
-  const handleEndConsultation = async () => {
-    // 총조언 먼저
-    setIsTyping(true);
-    
-    const cardsList = drawnCards.map(c => c.name).join(', ');
-    
-    const advicePrompt = `내담자 고민: "${concern}"
-뽑힌 카드: ${cardsList}
-
-상담을 마무리하며 내담자에게 따뜻한 격려와 실질적인 조언을 해주세요.
-
-요구사항:
-- 친구에게 말하듯 자연스럽게
-- 100자 내외
-- 희망적이고 긍정적으로
-- "~네요", "~세요" 사용`;
-
-    const finalAdvice = await callGeminiAPI(advicePrompt);
-    addMessage('assistant', finalAdvice);
-    setIsTyping(false);
-    
-    await new Promise(resolve => setTimeout(resolve, 1000));
-    addMessage('assistant', '상담을 종료합니다. 좋은 하루 보내세요! 😊');
-
-    try {
-      const { data, error } = await supabase
-        .from('consultations')
-        .insert([{
-          free_user_id: userId,
-          free_user_name: userName,
-          version_type: 'free',
-          card_type: CARD_TYPE,  // 카드 타입 추가
-          title: sessionTitle,
-          concern: concern,
-          cards_drawn: cardsList,
-          created_at: new Date().toISOString()
-        }])
-        .select()
-        .single();
-
-      if (error) {
-        console.error('저장 오류:', error);
-      } else if (data) {
-        setCurrentSessionId(data.id);
-        console.log(`상담 저장 완료 (${CARD_TYPE}):`, data.id);
-      }
-    } catch (err) {
-      console.error('저장 오류:', err);
-    }
-
-    setTimeout(() => {
-      setStep('finished');
-    }, 1500);
   };
 
   const handleShare = async () => {
@@ -769,7 +758,38 @@ ${conversationText}
     }
   };
 
-  const handleReset = () => {
+  const handleReset = async () => {
+    // 카드를 뽑았으면 DB에 저장
+    if (drawnCards.length > 0) {
+      try {
+        const cardsList = drawnCards.map(c => c.name).join(', ');
+        
+        const { data, error } = await supabase
+          .from('consultations')
+          .insert([{
+            free_user_id: userId,
+            free_user_name: userName,
+            version_type: 'free',
+            card_type: CARD_TYPE,
+            title: sessionTitle,
+            concern: concern,
+            cards_drawn: cardsList,
+            created_at: new Date().toISOString()
+          }])
+          .select()
+          .single();
+
+        if (error) {
+          console.error('저장 오류:', error);
+        } else if (data) {
+          console.log(`상담 저장 완료 (${CARD_TYPE}):`, data.id);
+        }
+      } catch (err) {
+        console.error('저장 오류:', err);
+      }
+    }
+    
+    // 상태 초기화 (sessionStorage는 유지 - 같은 세션이므로)
     setStep('input');
     setConcern('');
     setSessionTitle('');
@@ -780,6 +800,9 @@ ${conversationText}
     setCurrentSessionId(null);
     setCurrentCardIndex(0);
     setFinalReadingComplete(false);
+    
+    // 과거 상담 내역 다시 로드
+    await loadUserData(userId);
   };
 
   const addMessage = (role, content) => {
@@ -918,6 +941,115 @@ ${conversationText}
     );
   }
 
+  // welcome 화면 (이 카드 첫 방문)
+  if (step === 'welcome') {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 100%)',
+        color: '#006064',
+        padding: '30px 16px',
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontFamily: 'system-ui, -apple-system, sans-serif'
+      }}>
+        <div style={{ maxWidth: '400px', width: '100%' }}>
+          
+          <div style={{
+            position: 'fixed',
+            top: '12px',
+            right: '12px',
+            background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
+            padding: '8px 16px',
+            borderRadius: '20px',
+            fontWeight: 'bold',
+            fontSize: '13px',
+            color: 'white',
+            boxShadow: '0 4px 15px rgba(0, 172, 193, 0.4)',
+            zIndex: 1000
+          }}>
+            무료판
+          </div>
+
+          <div style={{ textAlign: 'center', marginBottom: '40px' }}>
+            <div style={{ fontSize: '80px', marginBottom: '20px' }}>🔮</div>
+            
+            {/* 카드 타입 표시 */}
+            <div style={{ 
+              fontSize: '20px', 
+              fontWeight: 'bold', 
+              color: '#00ACC1',
+              marginBottom: '8px'
+            }}>
+              {CARD_TYPE} 타로
+            </div>
+            <div style={{ 
+              fontSize: '13px', 
+              color: '#00838F',
+              marginBottom: '24px',
+              fontStyle: 'italic',
+              opacity: 0.8
+            }}>
+              {CARD_TYPE} Tarot Reading
+            </div>
+            
+            <h1 style={{ fontSize: '28px', marginBottom: '12px', margin: 0 }}>
+              {userName}님, 환영합니다! 🎉
+            </h1>
+            <p style={{ color: '#00838F', fontSize: '15px', lineHeight: '1.6' }}>
+              {CARD_TYPE} 타로에<br/>
+              처음 오셨네요!<br/>
+              새로운 인사이트를 찾아보세요
+            </p>
+          </div>
+
+          <div style={{
+            background: 'white',
+            borderRadius: '20px',
+            padding: '30px',
+            boxShadow: '0 10px 40px rgba(0, 172, 193, 0.2)'
+          }}>
+            <button
+              onClick={() => setStep('input')}
+              style={{
+                width: '100%',
+                padding: '16px',
+                borderRadius: '12px',
+                border: 'none',
+                background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
+                color: 'white',
+                fontSize: '17px',
+                fontWeight: 'bold',
+                cursor: 'pointer',
+                transition: 'all 0.3s',
+                boxShadow: '0 4px 15px rgba(0, 172, 193, 0.3)'
+              }}
+            >
+              상담 시작하기
+            </button>
+          </div>
+
+          <div style={{
+            marginTop: '30px',
+            padding: '20px',
+            background: 'white',
+            borderRadius: '15px',
+            textAlign: 'center',
+            fontSize: '13px',
+            color: '#00838F',
+            boxShadow: '0 2px 10px rgba(0, 172, 193, 0.1)',
+            lineHeight: '1.6'
+          }}>
+            💡 {CARD_TYPE} 카드만의 특별한<br/>
+            메시지를 만나보세요
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   if (step === 'input') {
     return (
       <div style={{
@@ -968,20 +1100,10 @@ ${conversationText}
             </div>
             
             <h1 style={{ fontSize: '26px', marginBottom: '8px', margin: '0 0 8px 0' }}>
-              {visitCount === 1 ? (
-                `${userName}님, 환영합니다!`
-              ) : (
-                `${userName}님, 다시 오셨네요!`
-              )}
+              {userName}님, {visitCount === 1 ? '환영합니다!' : '다시 오셨네요!'}
             </h1>
             <p style={{ color: '#00838F', fontSize: '14px', margin: 0 }}>
-              {visitCount === 1 ? (
-                '처음 오셨네요! 무료로 타로를 체험해보세요'
-              ) : pastSessions.length > 0 ? (
-                `${visitCount}번째 방문 • 지난번 ${pastSessions[0].title}`
-              ) : (
-                `${visitCount}번째 방문입니다`
-              )}
+              오늘은 어떤 고민이 있으신가요?
             </p>
             {allCards.length > 0 && (
               <div style={{ fontSize: '12px', color: '#00ACC1', marginTop: '5px' }}>
@@ -1270,8 +1392,9 @@ ${conversationText}
               개운법
             </button>
             
+            {/* 공유하기 버튼 */}
             <button
-              onClick={handleEndConsultation}
+              onClick={handleShare}
               style={{
                 width: '100%',
                 padding: '12px',
@@ -1282,72 +1405,32 @@ ${conversationText}
                 cursor: 'pointer',
                 fontWeight: 'bold',
                 boxShadow: '0 4px 15px rgba(0, 172, 193, 0.3)',
+                fontSize: '14px',
+                marginBottom: '10px'
+              }}
+            >
+              📤 공유하기
+            </button>
+            
+            {/* 다른 상담하기 버튼 */}
+            <button
+              onClick={handleReset}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: '10px',
+                border: '2px solid #00ACC1',
+                background: 'white',
+                color: '#00ACC1',
+                cursor: 'pointer',
+                fontWeight: 'bold',
                 fontSize: '14px'
               }}
             >
-              상담 종료
+              🔄 다른 상담하기
             </button>
           </div>
         )}
-      </div>
-    );
-  }
-
-  if (step === 'finished') {
-    return (
-      <div style={{
-        minHeight: '100vh',
-        background: 'linear-gradient(135deg, #E0F7FA 0%, #B2EBF2 50%, #80DEEA 100%)',
-        color: '#006064',
-        padding: '30px 16px',
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center'
-      }}>
-        <div style={{ fontSize: '60px', marginBottom: '16px' }}>✨</div>
-        <h1 style={{ fontSize: '26px', marginBottom: '16px', margin: '0 0 16px 0' }}>
-          상담이 완료되었습니다!
-        </h1>
-        <p style={{ color: '#00838F', marginBottom: '30px', fontSize: '16px', margin: '0 0 30px 0' }}>
-          좋은 하루 보내세요
-        </p>
-        
-        <div style={{ display: 'flex', gap: '12px', flexDirection: 'column', width: '100%', maxWidth: '300px' }}>
-          <button
-            onClick={handleShare}
-            style={{
-              padding: '12px 24px',
-              borderRadius: '10px',
-              border: '2px solid #00ACC1',
-              background: 'white',
-              color: '#00ACC1',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              fontSize: '15px',
-              transition: 'all 0.3s'
-            }}
-          >
-            공유하기
-          </button>
-          
-          <button
-            onClick={handleReset}
-            style={{
-              padding: '12px 24px',
-              borderRadius: '10px',
-              border: 'none',
-              background: 'linear-gradient(135deg, #00ACC1 0%, #0097A7 100%)',
-              color: 'white',
-              cursor: 'pointer',
-              fontWeight: 'bold',
-              fontSize: '15px',
-              boxShadow: '0 4px 15px rgba(0, 172, 193, 0.3)'
-            }}
-          >
-            처음으로
-          </button>
-        </div>
       </div>
     );
   }
